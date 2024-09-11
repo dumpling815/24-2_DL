@@ -14,8 +14,12 @@ def MSE(x, A, b):
     ##############################
     # You need to fill in here.
     # Your function must return the MSE between Ax and b
-    
-    return ...
+    Ax = A@x
+    err_sum = 0
+    for i in range(0,len(Ax)):
+        err_sum += (Ax[i]-b[i])**2
+    res = err_sum / len(Ax)
+    return res
 
 # size of matrix A (m by n) and b (m by 1)
 m = 1000
@@ -43,7 +47,7 @@ x0 = np.random.normal(mu, sig, n)
 ##############################
 # use minimize function to find the best parameter estimate
 # you need to properly use minimize function below
-estim = minimize(...)
+estim = minimize(MSE,x0)
 
 print('solution from minimize:', estim.x)
 print('true x', x_true)
