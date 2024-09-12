@@ -47,7 +47,7 @@ x0 = np.random.normal(mu, sig, n)
 ##############################
 # use minimize function to find the best parameter estimate
 # you need to properly use minimize function below
-estim = minimize(MSE,x0)
+estim = minimize(MSE,x0,args=(A,b))
 
 print('solution from minimize:', estim.x)
 print('true x', x_true)
