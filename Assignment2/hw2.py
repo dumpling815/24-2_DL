@@ -19,8 +19,21 @@ import data_generator as dg
 ########################################
 def cross_entropy_softmax_loss(Wb, x, y, num_class, n, feat_dim):
     # implement your function here
+    Wb = np.reshape(Wb, (-1,1))
+    b = Wb[-num_class:]
+    W = np.reshape(Wb[range(num_class * feat_dim)],(num_class,feat_dim))
+    x = np.reshape(x.T, (-1,n))
+    s = W@x + b
+    s_exp = np.exp(s - np.max(s))
+    # Because softmax function leverage exp(), the large number can occur bad stability. (exp(large number) causes bad situation)
+    # By put s - np.max(s), we can solve this problem.
+    # In addition, by the property of softmax, s - np.max(s) doesn't matter to the result of softmax.
+    softmax = s_exp / np.sum(s_exp)
+    likelihood = -np.log(softmax[y,range(n)])
+    cross_entropy_loss = np.sum(np.sum(likelihood))
+
     # return cross entropy loss
-    pass
+    return cross_entropy_loss
 
 # now lets test the model for linear models, that is, SVM and softmax
 def linear_classifier_test(Wb, x, y, num_class):
