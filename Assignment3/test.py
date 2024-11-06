@@ -14,9 +14,18 @@ class nn_linear_layer:
     ######
     ## Q1
     def forward(self,x):
-        res = np.matmul(self.W,x.T) + self.b
-        res = res.T
-        # res is 20,4
+        #x_3d = x[:,:,np.newaxis]
+        # x is now 20,2,1
+        #b_transpose = np.reshape(self.b,(1,-1)) # row vector (w. 2axis. that is (1 x ?))
+        #res = np.matmul(self.W, x_3d).squeeze(-1) + b_transpose
+        res = []
+        for i in range(len(x)):
+            x_column = np.reshape(x[i],(-1,1))
+            row = np.reshape(np.matmul(self.W, x_column) + self.b, (1,-1))
+            res.append(row)
+        res = np.array(res)
+        res = np.reshape(res,(len(x),len(self.W)))
+        # res is  20,4
         return res
     
    
@@ -24,14 +33,35 @@ class nn_linear_layer:
     ## Q2
     ## returns three parameters
     def backprop(self,x,dLdy):
-        dLdx = np.matmul(dLdy,self.W)
-        dLdW = np.matmul(dLdy.T,x) # it becomes 2,2!
-        dLdb = np.reshape(np.mean(dLdy, axis = 0),(1,-1))
+        dLdW2 = np.zeros((len(self.W),len(self.W[0])))
+        dLdW = []
+        dLdb = []
+        dLdx = []
+        for i in range(len(x)):
+            dldy = np.reshape(dLdy[i],(1,-1)) # jacobian
+
+            dydW = np.reshape(x[i],(1,-1)) # x transpose
+            dydx = self.W
+
+            dLdW2 += (np.matmul(np.reshape(dldy,(-1,1)),dydW))
+            dLdW.append(   np.matmul(np.reshape(dLdy[i],(-1,1)),dydW)     )
+            dLdx.append(np.matmul(dldy,dydx)) #jacobian
+        dLdW2 = dLdW2 / len(x)
+        """print(f"dLdW2: {dLdW2}")
+        print(f"answer: {np.matmul(dLdy.T,x)}")"""
+        dLdW = np.array(dLdW)
+        dLdW = np.reshape(np.mean(dLdW,axis=0),(len(self.W),-1))
+        #breakpoint()
+        #dLdW = np.reshape(np.array(dLdW).mean(axis = 0),(len(self.W),-1)) # same with W
+        dLdx = np.reshape(np.array(dLdx),(len(x),-1))                       # (20,4) when layer 2, another (20,2) -> useless
+        dLdb = np.reshape(np.mean(dLdy,axis = 0),(1,-1)) # in update, the skeleton consider dLdb as a row vector, jacobian
+
+
         return dLdW,dLdb,dLdx
 
     def update_weights(self,dLdW,dLdb):
         # parameter update
-        self.W=self.W+dLdW  
+        self.W=self.W+dLdW        
         self.b=self.b+dLdb
 
 class nn_activation_layer:
@@ -42,10 +72,9 @@ class nn_activation_layer:
     ######
     ## Q3
     def forward(self,x):
+        #res = np.array([ 1/ (1 + np.exp(-t)) for t in x])
+        res = np.where(x>=0, 1/(1+np.exp(-x)), np.exp(x)/(1+np.exp(x)))
         # overflow 방지 위해 x가 양수일 때는 일반적인 sigmoid, 아닌 경우 분자 분모에 모두 exp(x)곱하기.
-        #res = np.where(x>=0, 1/(1+np.exp(-x)), np.exp(x)/(1+np.exp(x)))
-        res = 1 / (1 + np.exp(-x))
-        #breakpoint()
         return res
     
     ######
@@ -85,20 +114,18 @@ class nn_softmax_layer:
     ######
     ## Q6
     def backprop(self,x,dLdp):
-        # dLdp -> 2차원 row vector   (1,2)
+        # dLdp -> 2차원 row vector   (20,2)
         dLds2 = []
         for i in range(0,len(x)):
             s1 = x[i][0]
             s2 = x[i][1]
             p1 = np.exp(s1) / (np.exp(s1)+np.exp(s2))
             p2 = 1 - p1 # because we have only two p_i
-            dpds2 = np.array( [[ p1*(1-p1), -p1*p2 ],\
-                               [-p1*p2 , p2*(1-p2)]])
-            #for j in range(0,len(x[i])):
-            dLds2.append(np.matmul(np.reshape(dLdp[i],(1,-1)),dpds2))
-            #dLds2.append(row)
+            dpds2 = np.array( [[ p1*(1-p1), -p1*p2 ], \
+                            [-p1*p2 , p2*(1-p2)]])
+            dLds2.append(np.matmul(dLdp[i],dpds2))
         dLds2 = np.array(dLds2)
-        dLds2 = np.reshape(dLds2,(len(x),len(x[i])))
+        dLds2 = np.reshape(dLds2,(len(x),len(x[0])))
         return dLds2
 
 class nn_cross_entropy_layer:
@@ -112,7 +139,8 @@ class nn_cross_entropy_layer:
         for i in range(0,len(x)): # loop : batch size
             b_i = y[i][0]
             p_i = x[i][0]
-            c_e = (1- b_i) * np.log(p_i) + (b_i) * np.log(1 - p_i)
+            # b_i는 XOR한 결과가 0일 확률. 즉 정답이 0이라면 b_i는 1, 아니면 0.
+            c_e = (1-b_i) * np.log(p_i) + (b_i) * np.log(1 - p_i)
             cross_entropy.append([-c_e])
         cross_entropy = np.array(cross_entropy).mean(axis = 0)
         return cross_entropy[0]
@@ -123,11 +151,18 @@ class nn_cross_entropy_layer:
         dLdp = []
         for i in range(0,len(x)):
             b_i = y[i][0]
-            p_i = x[i][0] 
-            jacobian_L = [ -( (1 - b_i) / p_i), -(b_i / (1-p_i)) ]
+            p_i = x[i][0]
+            jacobian_L = [ -((1 - b_i) / p_i) , -(b_i / (1-p_i))]
+            # !!!! 위의 자코비언에서 (-b_i / p_i)를 했을 경우에는 overflow ecountered in scalar negative라는 오류가 발생
+            # b_i는 이 hw 과제에서 unsinged int 8 로 설정되어서 -를 곱하면 오버플로우가 발생하고, 이로 인해 nan값이 생기고
+            # backporpagation 도중 nan가 확산되면서 전체 결과가 nan으로 바뀌는 현상이 있었음
+            # 단순히 괄호를 씌워줌으로써 scalar negative로 인한 overflow를 막을 수 있음.
             dLdp.append(jacobian_L)
         dLdp = np.array(dLdp)
         dLdp = np.reshape(dLdp,(len(x),len(x[0])))
+        # dLdp -> (20,2)
+        # 혼동 방지를 위해 row vector로 통일 -> Jacobian!
+        # [dLdp_1, dLdp_2] * 20times, that is, [grad_p_L] * 20times then, get mean
         return dLdp
 
 # number of data points for each of (0,0), (0,1), (1,0) and (1,1)
@@ -140,8 +175,8 @@ num_test=40
 ## learning rate (lr)and number of gradient descent steps (num_gd_step)
 ## This part is not graded (there is no definitive answer).
 ## You can set this hyperparameters through experiments.
-lr= 0.01
-num_gd_step= 1000
+lr= 1
+num_gd_step= 10000
 
 # dataset size
 batch_size=4*num_d
@@ -217,6 +252,7 @@ for i in range(num_gd_step):
     # fetch data
     x_train = x_train_d
     y_train = y_train_d
+        
     ################
     # forward pass
     
@@ -233,32 +269,34 @@ for i in range(num_gd_step):
     smax_out = smax.forward(l2_out)
     # cross entropy loss
     loss_out[i] = cent.forward(smax_out, y_train)
+    
     ################
     # perform backprop
     # output layer
     # cross entropy
     b_cent_out = cent.backprop(smax_out, y_train)
+    #breakpoint()
+
     # softmax
     b_nce_smax_out = smax.backprop(l2_out, b_cent_out)
+    #breakpoint()
+
     # linear
     b_dLdW_2, b_dLdb_2, b_dLdx_2 = layer2.backprop(x=a1_out, dLdy=b_nce_smax_out)
+    #breakpoint()
+
     
     # backprop, hidden layer
     # activation
     b_act_out = act.backprop(x=l1_out, dLdy=b_dLdx_2)
-    #breakpoint()
     # linear
     b_dLdW_1, b_dLdb_1, b_dLdx_1 = layer1.backprop(x=x_train, dLdy=b_act_out)
-    #breakpoint()
-    
+
     ################
     # update weights: perform gradient descent
     layer2.update_weights(dLdW=-b_dLdW_2 * lr, dLdb=-b_dLdb_2.T * lr)
     layer1.update_weights(dLdW=-b_dLdW_1 * lr, dLdb=-b_dLdb_1.T * lr)
 
-    """if i == num_gd_step // 2 :
-        breakpoint()
-"""
     if (i + 1) % 2000 == 0:
         print('gradient descent iteration:', i + 1)
 
@@ -282,7 +320,7 @@ for j in range(num_test):
     predicted = np.ones((4,))
     
     # dispersion of test data
-    sig_t = 1e-2
+    sig_t = 1e-5
     
     # generate test data
     # generate 4 samples, each sample nearby (1,1), (0,0), (1,0), (0,1) respectively
