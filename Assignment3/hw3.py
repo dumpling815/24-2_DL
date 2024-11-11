@@ -141,7 +141,7 @@ num_test=40
 ## This part is not graded (there is no definitive answer).
 ## You can set this hyperparameters through experiments.
 lr= 0.01
-num_gd_step= 1000
+num_gd_step= 100000
 
 # dataset size
 batch_size=4*num_d
