@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
  
+ 
 class nn_linear_layer:
     
     # linear layer.
