@@ -1,16 +1,16 @@
 """
 
-HW4
+nn_layers_pt.py
+
+PyTorch version of nn_layers
 
 """
 
 import torch
-import torch.nn as nn #Own code needed -> I personally added to control warning msgs.
 import torch.nn.functional as F
 import numbers
 import numpy as np
 import math
-
 
 """
 
@@ -51,7 +51,6 @@ def view_as_windows(arr_in, window_shape, step=1):
     on this array with a window of (3, 3, 3) the hypothetical size of
     the rolling view (if one was to reshape the view for example) would
     be 8*(100-3+1)**3*3**3 which is about 203 MB! The scaling becomes
-    ( 3,3,3 ) 짜리  window가 97*3개 존재하게 되기 때문! => 차원의 크기에 따라 필요한 메모리가 지수적으로 증가함!
     even worse as the dimension of the input array becomes larger.
     References
     ----------
@@ -125,11 +124,9 @@ def view_as_windows(arr_in, window_shape, step=1):
 
     ndim = arr_in.ndim
 
-
-    if isinstance(window_shape, numbers.Number): # window shape가 요소가 하나인 경우.
+    if isinstance(window_shape, numbers.Number):
         window_shape = (window_shape,) * ndim
-        print('debug')
-    if not (len(window_shape) == ndim): # window shape와 input tensor의 차원 갯수가 안맞을 경우 오류 발생.
+    if not (len(window_shape) == ndim):
         raise ValueError("`window_shape` is incompatible with `arr_in.shape`")
 
     if isinstance(step, numbers.Number):
@@ -181,6 +178,9 @@ class nn_convolutional_layer:
         self.W.requires_grad = True
         self.b.requires_grad = True
 
+        self.v_W = torch.zeros_like(self.W)
+        self.v_b = torch.zeros_like(self.b)
+        
         self.input_size = input_size
 
     def update_weights(self, dW, db):
@@ -194,9 +194,6 @@ class nn_convolutional_layer:
         self.W = W.clone().detach()
         self.b = b.clone().detach()
 
-    #######
-    # Q1. Complete this method
-    #######
     def forward(self, x):
         # forward function will be performed without padding, with stride 1.
         # That is, input width(height): N, filter size: F, output width: N-F+1
@@ -209,161 +206,134 @@ class nn_convolutional_layer:
         output_height = x.shape[2] - filter_height + 1
         output_width = x.shape[3] - filter_width + 1
 
-        out = torch.zeros(size=(x.shape[0],  
-                                num_filters, 
-                                output_height, 
-                                output_width))
-
-            
-        windows = view_as_windows(x,(1,in_ch_size,filter_height,filter_width)).squeeze()
-        # windows shape : (batch size, N-F+1, N-F+1, in_ch_size, filter_height, filter_width)
-        # In this problem's first forward, (8,30,30,3,3,3) 
-        for filter_index in range(num_filters):
-            filter = self.W[filter_index]
-            out[:,filter_index,:,:] = (windows * filter).sum(dim=(-3,-2,-1)) #마지막 3차원 합산, 
+        windows = view_as_windows(x,(1,in_ch_size,filter_height,filter_width))
+        windows = windows.reshape(batch_size,-1,filter_height * filter_height * in_ch_size)
+        W_flatten = self.W.reshape(num_filters,-1)
+        out = torch.matmul(windows,W_flatten.T).reshape(batch_size,num_filters,output_height,output_width)
         out += self.b
-            # (windows * filter).sum(dim=(-3,-2,-1)) 에서 windows * filters를 하면 windows size와 같이 나옴.
-            # 거기서 마지막 3차원 (filter size)를 모두 더하면 (batch size, N-F+1, N-F+1)
-            # 이걸 [:,filter_index,:,:]를 통해 최종 out과 차원 맞춤.
-        
-        # view_as_windows의 특징은, input tensor의 차원이 증가하면 필요한 메모리가 지수적으로 증가하게 됨.
-        # 따라서, for문을 더 사용해서 windows에 들어가는 input의 차원을 줄이면 시간 복잡도는 증가, 공간 복잡도는 감소
-        # 그러나 우리가 고려해아하는건 공간 복잡도가 지나치게 커진다면 결국은 OS의 memory caching 성능이 감소하게 됨
-        # 즉, 알고리즘 자체의 시간 복잡도 for문을 적게 사용하는 것이 유리할 수도 있으나, 전체 컴퓨팅 성능을 고려했을 때 메모리 자원의 병목으로
-        # 컴퓨팅 시간이 길어질 수도 있음을 명심해야함.
-
-        """ # 여기서 부터 새로운 implementation
-        for data in range(batch_size):
-            window = view_as_windows(x[data],(in_ch_size,filter_height,filter_width))
-            for filter_index in range(num_filters):
-                filter = self.W[filter_index]
-                out[data,filter_index,:,:] = (window * filter).sum(dim=(-3,-2,-1))
-        out += self.b"""
-
-
-        """
-        HW5 이후 수정 => 이런 방식이면 forward 과정은 괜찮긴하지만, for문이 들어갈 수록 backward에 걸리는 시간이 굉장히 오래걸리게됨
-        특히, maxpool의 경우 지나치게 많은 for문으로 비효율성이 극대화 되었고, 이로 인해 학습시간이 지수적으로 증가.
-        따라서 for문을 최대한 줄이고 계산을 vectorization을 통해 최적화 진행함. => 비교를 위해 hw4.py는 그대로 두고, hw5.py의 nn_layers_pt.py에 최적화된 코드를 작성해 두었음.
-        """
 
         return out
-
+        
     
+    def step(self, lr, friction):
+        with torch.no_grad():
+            self.v_W = friction*self.v_W + (1-friction)*self.W.grad
+            self.v_b = friction*self.v_b + (1-friction)*self.b.grad
+            self.W -= lr*self.v_W
+            self.b -= lr*self.v_b
+            
+            self.W.grad.zero_()
+            self.b.grad.zero_()
 
-    #######
-    ## If necessary, you can define additional class methods here
-    #######
-
-
+# max pooling
 class nn_max_pooling_layer:
     def __init__(self, pool_size, stride):
         self.stride = stride
         self.pool_size = pool_size
-        #######
-        ## If necessary, you can define additional class variables here
-        #######
 
-    #######
-    # Q2. Complete this method
-    #######
     def forward(self, x):
         batch_size = x.shape[0]
         in_ch_size = x.shape[1]
         output_height = (x.shape[2] - self.pool_size) // self.stride + 1
         output_width = (x.shape[3] - self.pool_size) // self.stride + 1
 
-        out = torch.zeros(size=(batch_size,in_ch_size,output_width,output_height))
+        # unfold(dimension, size, step)
+        # dimension : sliding window를 적용할 차원 지정.
+        """windows = view_as_windows(x,(batch_size, in_ch_size, self.pool_size, self.pool_size),self.stride)
+        windows = windows.reshape((batch_size,in_ch_size,output_height,output_width,-1))"""
+        windows = x.unfold(2,self.pool_size, self.stride).unfold(3,self.pool_size, self.stride)
+        windows = windows.reshape((batch_size,in_ch_size,output_height,output_width,-1))
 
-        for data in range(batch_size):
-            for depth in range(in_ch_size):
-                windows = view_as_windows(x[data][depth],(self.pool_size,self.pool_size),stride)
-                for row in range(len(windows)):
-                    for col in range(len(windows[0])):
-                        window = windows[row][col]
-                        out[data,depth,row,col] = window.max()
+        # index는 필요 x.
+        # 마지막 차원 축소.
+        out, _ = windows.max(dim = -1)
         return out
-    #######
-    ## If necessary, you can define additional class methods here
-    #######
 
-"""
-TESTING 
-"""
+# relu activation
+class nn_activation_layer:
 
-if __name__ == "__main__":
+    # linear layer. creates matrix W and bias b
+    # W is in by out, and b is out by 1
+    def __init__(self):
+        pass
 
-    # data sizes
-    batch_size = 8
-    input_size = 32
-    filter_width = 3
-    filter_height = filter_width
-    in_ch_size = 3
-    num_filters = 8
+    def forward(self, x):
+        return x.clamp(min=0)
 
-    std = 1e0
-    dt = 1e-3
+# fully connected (linear) layer
+class nn_fc_layer:
 
-    # number of test loops
-    num_test = 50
-
-    # error parameters
-    err_fwd = 0
-    err_pool = 0
-
-
-    # for reproducibility
-    # torch.manual_seed(0)
-
-    # set default type to float64
-    torch.set_default_dtype(torch.float64)
-
-    print('conv test')
-    for i in range(num_test):
-        # create convolutional layer object
-        cnv = nn_convolutional_layer(filter_height, filter_width, input_size,
-                                   in_ch_size, num_filters)
-
-        # test conv layer from torch.nn for reference
-        test_conv_layer = torch.nn.Conv2d(in_channels=in_ch_size, out_channels=num_filters,
-                                kernel_size = (filter_height, filter_width))
+    def __init__(self, input_size, output_size, std=1):
         
-        # test input
-        x = torch.normal(0, 1, (batch_size, in_ch_size, input_size, input_size))
-        
+        # Xavier/He init
+        self.W = torch.normal(0, std/math.sqrt(input_size/2), (output_size, input_size))
+        self.b=0.01+torch.zeros((output_size))
+
+        self.W.requires_grad = True
+        self.b.requires_grad = True
+
+        self.v_W = torch.zeros_like(self.W)
+        self.v_b = torch.zeros_like(self.b)
+
+    ## Q1
+    def forward(self,x):
+        # compute forward pass of given parameter
+        # output size is batch x output_size x 1 x 1
+        # input size is batch x input_size x filt_size x filt_size
+        output_size = self.W.shape[0]
+        batch_size = x.shape[0]
+        Wx = torch.mm(x.reshape((batch_size, -1)),(self.W.reshape(output_size, -1)).T)
+        out = Wx+self.b
+        return out
+
+    def update_weights(self,dLdW,dLdb):
+        # parameter update
+        self.W=self.W+dLdW
+        self.b=self.b+dLdb
+
+    def get_weights(self):
+        return self.W.clone().detach(), self.b.clone().detach()
+
+    def set_weights(self, W, b):
+        self.W = W.clone().detach()
+        self.b = b.clone().detach()
+    
+    def step(self, lr, friction):
         with torch.no_grad():
-            
-            out = cnv.forward(x)
-            W,b = cnv.get_weights()
-            test_conv_layer.weight = nn.Parameter(W)
-            test_conv_layer.bias = nn.Parameter(torch.squeeze(b))
-            test_out = test_conv_layer(x)
-            
-            err=torch.norm(test_out - out)/torch.norm(test_out)
-            err_fwd+= err
-    
-    stride = 2
-    pool_size = 2
-    
-    print('pooling test')
-    for i in range(num_test):
-        # create pooling layer object
-        mpl = nn_max_pooling_layer(pool_size=pool_size, stride=stride)
+            self.v_W = friction*self.v_W + (1-friction)*self.W.grad
+            self.v_b = friction*self.v_b + (1-friction)*self.b.grad
+            self.W -= lr*self.v_W
+            self.b -= lr*self.v_b
+            self.W.grad.zero_()
+            self.b.grad.zero_()
+
+
+# softmax layer
+class nn_softmax_layer:
+    def __init__(self):
+        pass
+
+    def forward(self, x):
+        s = x - torch.unsqueeze(torch.amax(x, axis=1), -1)
+        return (torch.exp(s) / torch.unsqueeze(torch.sum(torch.exp(s), axis=1), -1)).reshape((x.shape[0],x.shape[1]))
+
+
+# cross entropy layer
+class nn_cross_entropy_layer:
+    def __init__(self):
+        self.eps=1e-15
+
+    def forward(self, x, y):
+        # first get softmax
+        batch_size = x.shape[0]
+        num_class = x.shape[1]
         
-        # test pooling layer from torch.nn for reference
-        test_pooling_layer = nn.MaxPool2d(kernel_size=(pool_size,pool_size), stride=stride)
-        
-        # test input
-        x = torch.normal(0, 1, (batch_size, in_ch_size, input_size, input_size))
-        
-        with torch.no_grad():
-            out = mpl.forward(x)
-            test_out = test_pooling_layer(x)
-            
-            err=torch.norm(test_out - out)/torch.norm(test_out)
-            err_pool+= err
-    
-    # reporting accuracy results.
-    print('accuracy results')
-    print('forward accuracy', 100 - err_fwd/num_test*100, '%')
-    print('pooling accuracy', 100 - err_pool/num_test*100, '%')
+        onehot = np.zeros((batch_size, num_class))
+        onehot[range(batch_size), (np.array(y)).reshape(-1, )] = 1
+        onehot = torch.as_tensor(onehot)
+
+        # avoid numerial instability
+        x[x<self.eps]=self.eps
+        x=x/torch.unsqueeze(torch.sum(x,axis=1), -1)
+
+        return sum(-torch.sum(torch.log(x.reshape(batch_size, -1)) * onehot, axis=0)) / batch_size
